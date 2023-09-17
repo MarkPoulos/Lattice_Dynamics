@@ -1,0 +1,124 @@
+#---------------------------------------------------------------------------------
+# Graphene Bilayer Sheet (Gr2L) Equilibration relaxation for kVACS
+#
+# Creates and equilibrates a bilayer graphene sheet with primitive unit cell structure
+# 
+# Markos Poulos CETHIL / MiNT Group (C) 2022-2023
+#----------------------------------------------------------------------------------
+
+
+
+############################################   1. SIMULATION DETAILS  ##############################################
+#-------------------------------------------------------------------------------------------------------------------
+
+variable       L_system         equal 20                 # Length of the System region                    (in nm)
+variable       thickness        equal 6.7                # Bilayer thickness (2 x VdW radius of graphite)         (in Angstroms)
+variable       a_initial        equal 0.249              # Intitial lattice constant                              (in nm)
+variable       scale_z          equal 2                  # Scale box z length to accomodate for big ripples    (unitless)
+
+variable       t_init           equal 300                # Equilibrium target temperature
+variable       t                equal 300                # Equilibrium target temperature
+
+variable       relax_tstep      equal 0.001              # Timestep during thermal relaxation step.
+variable       no_relaxations   equal 5                  # Number of times the initial NVE equilibration will be performed
+variable       T_damp           equal 0.2                # Temperature damping parameter for the Nose-Hover thermostat.
+variable       thermo_steps     equal 1000               # Output thermal data every thermo_steps
+variable       relaxsteps       equal 250000             # Thermal relaxation steps at new temperature
+
+#-------------------------------------------------------------------------------------------------------------------
+############################################   2. SYSTEM DEFINITION   ##############################################
+                 
+variable       N_x         equal round($(v_L_system/v_a_initial))
+variable       N_y         equal ${N_x}
+
+dimension      3
+boundary       p p f                                
+units          metal 
+
+neighbor       1.4 bin
+neigh_modify   every 1 delay 1000 check no
+
+atom_style     full
+read_data      ./Bilayer_Primitive.full
+
+replicate      ${N_x} ${N_y} 1                        
+
+
+# Tersoff (intralayer) + Lennard-Jones (interlayer) potential.
+pair_style     hybrid tersoff tersoff lj/cut 8.315
+pair_coeff     * * tersoff 1 ./BNC.tersoff C C NULL NULL
+pair_coeff     * * tersoff 2 ./BNC.tersoff NULL NULL C C
+pair_coeff     1*2 3*4  lj/cut 0.0046 3.276 8.315   # LJ parameters for the C-C vdW interlayer interaction (taken from Lindsay et al, PRB 83, 235428 (2011))
+
+
+# Tersoff (intralayer) + Kolmogorov-Crespi (interlayer) potential. 
+# For this, a hybrid/overlay pair_style and a full atom style are needed.  With the overlay we can define 
+# the intralayer potential as a default and then overwrite the interlayer interations with the KC potential.
+#
+# Note that for this particular potential, a molecular id is required because the interactions are only calculated between
+# atoms that have different molecule id (belong to different layers), as can be seen in the file 
+# "pair_kolmogorov_crespi_full.cpp"
+# A. N. Kolmogorov, V. H. Crespi, Phys. Rev. B 71, 235415 (2005)
+# W. Ouyang, D. Mandelli, M. Urbakh and O. Hod, Nano Lett. 18, 6009-6016 (2018)
+
+# set type 1*2 mol 1    # By replicating, molecule id is also replicated!!!
+# set type 3*4 mol 2    # Have to redefine the molecule groups afterwards!
+# pair_style     hybrid/overlay tersoff kolmogorov/crespi/full 8.0 1
+# pair_coeff     * *  tersoff ./BNC.tersoff C C C C
+# pair_coeff     1*2 3*4  none
+# pair_coeff     * *  kolmogorov/crespi/full  ./CH_taper.KC C C C C
+
+
+############################################   3. THERMAL EQUILIBRATION   ##########################################
+#-------------------------------------------------------------------------------------------------------------------
+
+## A) Run a CG total energy minimization first
+thermo         ${thermo_steps}
+#dump           relax all netcdf 1 traj_relax_box.nc mol xu yu zu 
+change_box     all boundary p p p
+variable       force_tol     equal 1.e-10
+variable       Min_Steps     equal 10000
+fix            CG_RELAX all box/relax x 0.0 y 0.0 z 0.0 couple xy vmax 0.001 dilate all
+min_style      cg
+
+minimize       0.0 ${force_tol} ${Min_Steps} ${Min_Steps}
+
+unfix          CG_RELAX
+#undump         relax
+change_box     all boundary p p f
+
+# 1) Run a NVE pre-simulation for a little while (fastrelaxsteps). This relaxes the initially 
+#    flat geometry. This will exchange some kinetic with potential energy (initial structure is
+#    flat). As a result, the temperature will drop (close to half, according to the equipartition 
+#    theorem). This creates good initial velocities for the follow-up NVT relaxation (relaxsteps).
+
+thermo         ${thermo_steps}
+thermo_style   custom step ke pe etotal temp pxx pyy pzz press 
+change_box     all z scale ${scale_z}                                  # Fix and scale up the z-boundaries (so as not to lose atoms because of ripples!)
+
+fix            FIXNVE all nve
+timestep       ${relax_tstep}
+variable       fastrelaxsteps  equal ${relaxsteps}/${no_relaxations}
+
+reset_timestep 0
+#dump           TRAJ_NVE all netcdf 10 traj_NVE.nc xu yu zu
+variable       j  loop ${no_relaxations}
+label          loop_j
+
+    variable       seed equal round(random(1,10000,5))
+    velocity       all create ${t} ${seed} dist gaussian
+    run            ${fastrelaxsteps}
+
+next              j
+jump              SELF loop_j
+
+#undump         TRAJ_NVE
+unfix          FIXNVE
+
+# 2) NVT RELAXATION
+fix            FIXNVT all nvt temp ${t} ${t} ${T_damp}
+run            ${relaxsteps}
+unfix          FIXNVT
+
+write_data     Equil.data nocoeff 
+write_restart  Restart.equil

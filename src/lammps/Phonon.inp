@@ -1,0 +1,56 @@
+#---------------------------------------------------------------------------------
+# Graphene Monolayer Sheet Relaxation + Equilibration
+#
+# Creates and equilibrates a graphene monolayer sheet with rectangular unit cell structure
+# 
+#----------------------------------------------------------------------------------
+
+dimension      3
+boundary       p p p                                
+units          metal 
+
+neighbor       1.4 bin
+neigh_modify   every 100 delay 1000 check no
+
+atom_modify	   map array sort 0 0.0
+# atom_style     charge
+# read_data      ./Graphene_Primitive.charge
+atom_style     full
+read_data      ./Bilayer_Primitive.full
+
+
+replicate      20 20 1
+
+# Tersoff (intralayer) + Kolmogorov-Crespi (interlayer) potential. 
+set type 1*2 mol 1    # By replicating, molecule id is also replicated!!!
+set type 3*4 mol 2    # Have to redefine the molecule groups afterwards!
+pair_style     hybrid/overlay tersoff kolmogorov/crespi/full 8.0 1
+pair_coeff     * *  tersoff ./BNC.tersoff C C C C
+pair_coeff     1*2 3*4  none
+pair_coeff     * *  kolmogorov/crespi/full  ./CH_taper.KC C C C C
+
+
+# # Tersoff (intralayer) + Lennard-Jones (interlayer) potential.
+# pair_style     hybrid tersoff tersoff lj/cut 8.315
+# pair_coeff     * * tersoff 1 ./BNC.tersoff C C NULL NULL
+# pair_coeff     * * tersoff 2 ./BNC.tersoff NULL NULL C C
+# pair_coeff     1*2 3*4  lj/cut 0.0046 3.276 8.315   
+
+# pair_style     tersoff
+# pair_coeff      * * ./BNC.tersoff C C
+
+
+
+############################################   3. THERMAL EQUILIBRATION   ##########################################
+#-------------------------------------------------------------------------------------------------------------------
+
+variable       thermo_steps   equal  500                 # How often to output thermodynamic data on the screen
+thermo         ${thermo_steps}
+thermo_style   custom step ke pe etotal temp pxx pyy pzz press 
+
+dynamical_matrix all regular 0.0005 file Dyn_Mat binary gzip
+
+dump             struct all netcdf 1 Structure.nc id type x y z
+
+run 0
+

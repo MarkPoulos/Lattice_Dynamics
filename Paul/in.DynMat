@@ -1,0 +1,62 @@
+boundary f f p 
+
+atom_style atomic
+atom_modify	map array sort 0 0.0
+
+
+#Potential variable
+variable        Rcut equal 2.5
+variable        RcutIn equal 2
+variable        RcutOut equal 2.5
+variable        Sigma11 equal 2*sin(PI/10)
+variable        Sigma22 equal 2*sin(PI/5)
+
+#Min  variable
+variable        MiniAlgo string cg # value = cg or hftn or sd or quickmin or fire
+variable        LineSearch string forcezero # value = backtrack or quadratic or forcezero
+variable        dmax equal 1e-2#Min  variable 
+variable        MaxStepNumber equal 1e5
+variable        MinError equal 1e-12 # 0
+#Geometry variables
+
+variable        Rfree  equal 5
+
+#NEB variable
+
+dimension 2
+
+
+
+pair_style lj/smooth ${RcutIn} ${RcutOut}
+
+# init config
+read_data ${Path}/Step${BegConf}.data
+
+pair_coeff 1 2 1.0 1.0 ${RcutIn} ${RcutOut}
+pair_coeff 1 1 0.5 ${Sigma11} ${RcutIn} ${RcutOut}
+pair_coeff 2 2 0.5 ${Sigma22} ${RcutIn} ${RcutOut}
+mass       1 1.0
+mass       2 1.0
+pair_modify shift yes
+neighbor        0.3 bin
+neigh_modify    every  2 check no 
+
+
+
+
+# assume center of the box
+
+region          region23 sphere $(xlo+lx/2) $(ylo+ly/2) 0 ${Rfree} side out units box
+
+region          region1 sphere $(xlo+lx/2) $(ylo+ly/2) 0 ${Rfree}  side in units box
+group           group_1   region region1
+group           group_23  region region23
+
+
+fix             FreezeFix group_23 setforce 0.0 0.0 0.0
+fix 5 all enforce2d
+
+
+dynamical_matrix group_1 regular 0.0005 file dynmat-Min.dat 
+
+
