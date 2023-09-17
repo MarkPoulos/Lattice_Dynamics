@@ -1,21 +1,19 @@
 #%%
 %matplotlib qt
 import numpy as np
-from numpy.linalg import norm
+import re
 import netCDF4 as nc
-from mpl_toolkits.mplot3d import Axes3D  
 import matplotlib.pyplot as plt
-import matplotlib.pylab as pylab
 import scipy as sp
 
 #######################   USER INPUT   ######################
 Path                 = "./lammps"
-Dyn_Mat_Filename     = "Dyn_Mat.gz"
+log_filename         = "log.lammps"
 Structure_Filename   = "Structure.nc"
+Dyn_Mat_Filename     = "Dyn_Mat.gz"
 k_vec_filename       = 'k-vectorsGKMG.dat'
-N_a                  = 20
-ticks                = [0, 6.67, 10, 20]
-tick_labels          = [r"$ \Gamma $", r"$K$", r"$M$", r"$ \Gamma $"]
+branch_cuts          = [7, 11, 20]           # Indices of the k-points that delimit the BZ paths
+
 save_eigs            = False
 save_figures         = False
 #######################   USER INPUT   ######################
@@ -28,6 +26,14 @@ save_figures         = False
 k_vec_list=np.loadtxt(k_vec_filename, dtype=np.float64, comments='#')
 no_kpoints=k_vec_list.shape[0]
 
+# Load Unit Cell replication data (from log file)
+with open(Path+"/"+log_filename) as f:
+    for line in f:
+        if 'replicate' in line:
+            match=re.findall(r"replicate + (\d+) (\d+) (\d+)", line)
+            if match!=[]: replicate=list(map(int,match[0])); break
+N_a=replicate[0]
+
 # Load Structure Data
 pos_variable_name  = 'coordinates'  
 ds=nc.Dataset(Path+"/"+Structure_Filename, mode='a')
@@ -38,6 +44,8 @@ cell_dimensions=np.ma.getdata(ds['cell_lengths'][0, :])
 cell_origin=np.ma.getdata(ds['cell_origin'][0, :])
 Positions=np.ma.getdata(ds[pos_variable_name][0, :, :]) 
 no_atoms=len(types_map)
+lattice_constant=cell_dimensions[0]/N_a
+print('Lattice Constant: '+"{:.3f}".format(lattice_constant)+' Angstroms')
 
 # Load Force Constant Matrix (+ make it complex)
 dyn_mat=np.loadtxt(Path+"/"+Dyn_Mat_Filename)
@@ -53,13 +61,19 @@ Conversion=eV/(gram/mole*Angstrom**2)                      # [Dyn_Mat] = [energy
 #w_Conversion=np.sqrt(Conversion)/(2*np.pi)*1e-12          # In THz
 w_Conversion=np.sqrt(Conversion)/(2*np.pi)*1e-12*33.356    # In cm-1
 
-#%%
+# Calculate differential k-vector norms (without the 2p/a), separately within branch cut paths
+start=0; knorm=[0]
+for i in branch_cuts:
+    stop = i
+    # Find path differential steps for each branch cut and append to knorm
+    dk=[np.linalg.norm(k_vec_list[i]-k_vec_list[i-1]) for i in range(start+1, stop)]
+    knorm+=list(knorm[-1]+np.cumsum(dk))
+    start=i
 
+#%%
 ## 2. Dispersion Curves:
 
 R_l=Positions[(types_map==1)]              # Take the position of atom type #1 to be the position of the corresponidng unit cellDisp_Curves
-lattice_constant=cell_dimensions[0]/N_a
-print('Lattice Constant: '+"{:.3f}".format(lattice_constant)+' Angstroms')
 Disp_Curves  = np.zeros((3*no_types, no_kpoints), dtype=np.float64)
 Eigen_Vecs   = np.zeros((3*no_types, 3*no_types, no_kpoints), dtype=np.complex128) # Cartesian for each atom, each mode, each k-point
 
@@ -88,37 +102,44 @@ for k, k_vec in enumerate(k_vec_list):
     Disp_Curves[:, k]=w
     Eigen_Vecs[:,:,k]=eigenvec
 
+ds.close()
 #%%
 ## 3. Visualise the dispersion Curves
-############################################
-no_branches=2
-k_points=np.arange(1, len(k_vec_list)-1)
+#############################################
+no_branches   = 2
+ 
+suptitle      = 'Phonon Dispersion Curves'
+title         = 'Lennard-Jones'
+ticks         = [0, 0.667, knorm[10], knorm[20]]
+tick_labels   = [r"$ \Gamma $", r"$K$", r"$M$", r"$ \Gamma $"]
+filename      = "KC_Dispersion_Curves.svg"
 #############################################
 
 y=Disp_Curves[:no_branches, :]
 fig, ax= plt.subplots(figsize=(6,3))
-for k in k_points:
-    k_= k*np.ones(y.shape[0])
-    ax.scatter(k_,y[:,k], s=10, color='black')
+for branch in range(no_branches):
+    ax.scatter(knorm,y[branch,:], s=10)
+del(k_points)
 
-# Gamma Point especially
+# Gamma Point(s) especially
 y=Disp_Curves[:6, 0]
 k_= 0*np.ones(len(y))
-ax.scatter(k_,y, s=10, color='black')
+ax.scatter(k_,y, s=10, color='blue')
 k_= (len(k_vec_list)-1)*np.ones(len(y))
-ax.scatter(k_,y, s=10, color='black')
+ax.scatter(k_,y, s=10, color='red')
+del(k_)
 
-fig.suptitle('Phonon Dispersion Curves', fontweight ="bold", fontsize = 15,
+fig.suptitle(suptitle, fontweight ="bold", fontsize = 15,
                      transform=ax.transAxes, y=1.15)
 ax.set_ylim(0, 550)
-#ax.set_title('Lennard-Jones', style='italic', verticalalignment='center', fontsize=13,  pad=12)
+ax.set_title(title, style='italic', verticalalignment='center', fontsize=13,  pad=12)
 ax.set_ylabel(r'Energy ($cm^{-1}$)', fontsize = 12)
 ax.set_xticks(ticks, tick_labels, fontsize=12)
 
 ## Save the Results
 if save_figures is True:
     #np.savetxt(Path+"/LJ_Dispersion_Curves.dat", Disp_Curves, fmt='%.3f', delimiter='\t')
-    fig.savefig(Path+"/KC_Dispersion_Curves.svg",bbox_inches='tight',transparent=True)
+    fig.savefig(Path+"/"+filename,bbox_inches='tight',transparent=True)
 
 #%%
 # 4. Plot eigenvectors on atoms (Unit Cell)
@@ -145,9 +166,21 @@ ax.legend()
 if save_figures:
     fig.savefig(Path+"Eig_%s.svg"%mode_choice,bbox_inches='tight',transparent=True)
 
-if save_eigs:
-    np.savez(Path+"/Eigs.npz", w= w, eigenvec=eigenvec)
+#%%
+# 5. Save eigvals, group vels and eigvecs for a branch of interest
+#############################################
+branch_name='ZA'                               # Name of the branch of interest
+order = [0 for i in range(no_kpoints)]         # Index of the modes at each k-point that constitute the branch
+#############################################
 
-ds.close()
+w=[]; eigenvec=[]
+for i,k in enumerate(k_vec_list):
+    w.append(Disp_Curves[order[i],i])
+    eigenvec.append(Eigen_Vecs[:,order[i],i]) 
+
+kfactor=lattice_constant/(2*np.pi)
+# Output results [knorm in Ang.(-2), w in cm(-1), vg in km/s]
+if save_eigs:
+    np.savez(Path+"/"+branch_name+"_Eigs.npz", knorm = knorm, w= w, eigenvec=eigenvec)
 
 # %%
