@@ -17,6 +17,7 @@ N_a                  = 20
 ticks                = [0, 6.67, 10, 20]
 tick_labels          = [r"$ \Gamma $", r"$K$", r"$M$", r"$ \Gamma $"]
 save_eigs            = False
+save_figures         = False
 #######################   USER INPUT   ######################
 
 
@@ -88,7 +89,7 @@ for k, k_vec in enumerate(k_vec_list):
     Eigen_Vecs[:,:,k]=eigenvec
 
 #%%
-## Visualise the dispersion Curves
+## 3. Visualise the dispersion Curves
 ############################################
 no_branches=2
 k_points=np.arange(1, len(k_vec_list)-1)
@@ -114,17 +115,16 @@ ax.set_ylim(0, 550)
 ax.set_ylabel(r'Energy ($cm^{-1}$)', fontsize = 12)
 ax.set_xticks(ticks, tick_labels, fontsize=12)
 
-
 ## Save the Results
-if save_eigs is True:
+if save_figures is True:
     #np.savetxt(Path+"/LJ_Dispersion_Curves.dat", Disp_Curves, fmt='%.3f', delimiter='\t')
     fig.savefig(Path+"/KC_Dispersion_Curves.svg",bbox_inches='tight',transparent=True)
 
 #%%
-# Plot eigenvectors on atoms (Unit Cell)
+# 4. Plot eigenvectors on atoms (Unit Cell)
 #####################
-k_point_choice=1  # Choice of k-point index to plot
-mode_choice=5     # Choice of mode index to plot for this specific k-point
+k_point_choice=6  # Choice of k-point index to plot
+mode_choice=2     # Choice of mode index to plot for this specific k-point
 #####################
 
 ex=Eigen_Vecs[0::3,mode_choice-1,k_point_choice-1].real
@@ -142,82 +142,11 @@ ax.set_xlabel(r'x ($\AA$)'); ax.set_ylabel(r'y ($\AA$)'); ax.set_zlabel(r'z ($\A
 ax.set_aspect('auto', 'box')
 ax.legend()
 
+if save_figures:
+    fig.savefig(Path+"Eig_%s.svg"%mode_choice,bbox_inches='tight',transparent=True)
 
-
-#%%
-## 3. Full Diagonalisation of the Force Constant Matrix
-
-# Diagonalise
-eigenval,eigenvec =np.linalg.eig(dyn_mat)  # Eigenvectors output column-wise!
-
-# Check that we don't have negative and/or imaginary eigenvalues
-tolerance=5e-8
-if not (abs(eigenval.imag)<tolerance).all(): print("Imaginary Eigenvalues Detected")
-if not (eigenval.real>=-tolerance).all(): print("Negative Eigenvalues Detected")       
-eigenval=abs(eigenval.real)
-
-w=np.sqrt(eigenval)*w_Conversion
-
-# Sort ascending and zero threshold
-arg_sort= np.argsort(w)
-w=np.sort(w)
-eigenvec=eigenvec[:,arg_sort]
-eigenvec[eigenvec < 1e-5] = 0
-
-del(eigenval)
-del(dyn_mat)
-
-#%%
-# Participation Ratio
-
-## UPDATE AND CORRECT FORMULA
-ex_2=(eigenvec[0::3,:]*np.conj(eigenvec[0::3,:])).real
-ey_2=(eigenvec[1::3,:]*np.conj(eigenvec[1::3,:])).real
-ez_2=(eigenvec[2::3,:]*np.conj(eigenvec[2::3,:])).real
-enumerator=(norm(eigenvec, axis=0)**4) # Possibly always unity
-denominator=np.sum((ex_2+ey_2+ez_2)**2, axis=0)
-
-Part_Ratio=1/no_atoms*enumerator/denominator
-Part_Map=np.sum(1/np.sqrt(no_atoms*denominator)*(ex_2+ey_2+ez_2)**2, axis=1)
-
-del(enumerator,denominator,ex_2, ey_2, ez_2)
-
-#%%
-# Plot eigenvectors on atoms
-mode_choice=5
-
-ex=(eigenvec[0::3,mode_choice-1]).real
-ey=(eigenvec[1::3,mode_choice-1]).real
-
-fig, ax= plt.subplots(figsize=(5,5))
-for i in range(no_types):
-    mask=(types_map==(i+1))
-    ax.scatter(Positions[mask,0],Positions[mask,1], s=20)
-
-ax.quiver(Positions[:,0],Positions[:,1], ex, ey,
-            units='xy', label=r"$\omega = \ %.1f \ cm^{-1}$"%(w[mode_choice-1]))# 3D
-
-ax.set_xlabel(r'x ($\AA$)')
-ax.set_ylabel(r'y ($\AA$)')
-ax.set_xlim(cell_origin[0], 1.5*(cell_origin[0]+cell_dimensions[0]))
-ax.set_ylim(cell_origin[1], 1.1*(cell_origin[1]+cell_dimensions[1]))
-ax.set_aspect('equal', 'box')
-ax.legend()
-
-#%%
-# Save Eigenvectors in the NetCDF file of the positions
-save_eigs=True
 if save_eigs:
-    ds=nc.Dataset(Path+"/"+Structure_Filename, mode='a')
-    # fig.savefig(Path+"Eig_%s.svg"%mode_choice,bbox_inches='tight',transparent=True)
-    # np.savez(Path+"/Eigs.npz", w= w, Part_Ratio=Part_Ratio,eigenvec=eigenvec)
-    eig=ds.createVariable('Eig_w_%.0f'%w[mode_choice-1], np.float32, ('frame', 'atom', 'spatial'))
-    pr=ds.createVariable('PR_w_%.0f'%w[mode_choice-1], np.float32, ('frame', 'atom'))
-    # pr=ds['PR_w_%.0f'%w[mode_choice-1]]
-    # eig=ds['Eig_w_%.0f'%w[mode_choice-1]]
-    
-    pr[:,:]=Part_Map
-    eig[:,:,:]=eigenvec[:, mode_choice-1].real.reshape(1, no_atoms, 3)
+    np.savez(Path+"/Eigs.npz", w= w, eigenvec=eigenvec)
 
 ds.close()
 
