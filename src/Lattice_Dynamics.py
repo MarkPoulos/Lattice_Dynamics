@@ -11,7 +11,7 @@ Path                 = "./lammps"
 log_filename         = "log.lammps"
 Structure_Filename   = "Structure.nc"
 Dyn_Mat_Filename     = "Dyn_Mat.gz"
-k_vec_filename       = 'k-vectorsGKMG.dat'
+k_vec_filename       = 'k-vectorsGKMG_CORRECT-BZ.dat'
 branch_cuts          = [7, 11, 20]           # Indices of the k-points that delimit the BZ paths
 
 save_eigs            = False
@@ -61,12 +61,13 @@ Conversion=eV/(gram/mole*Angstrom**2)                      # [Dyn_Mat] = [energy
 #w_Conversion=np.sqrt(Conversion)/(2*np.pi)*1e-12          # In THz
 w_Conversion=np.sqrt(Conversion)/(2*np.pi)*1e-12*33.356    # In cm-1
 
+#%%
 # Calculate differential k-vector norms (without the 2p/a), separately within branch cut paths
 start=0; knorm=[0]
 for i in branch_cuts:
     stop = i
     # Find path differential steps for each branch cut and append to knorm
-    dk=[np.linalg.norm(k_vec_list[i]-k_vec_list[i-1]) for i in range(start+1, stop)]
+    dk=[np.linalg.norm(k_vec_list[i]-k_vec_list[i-1]) for i in range(start+1, stop+1)]
     knorm+=list(knorm[-1]+np.cumsum(dk))
     start=i
 
@@ -103,6 +104,7 @@ for k, k_vec in enumerate(k_vec_list):
     Eigen_Vecs[:,:,k]=eigenvec
 
 ds.close()
+
 #%%
 ## 3. Visualise the dispersion Curves
 #############################################
@@ -110,24 +112,15 @@ no_branches   = 2
  
 suptitle      = 'Phonon Dispersion Curves'
 title         = 'Lennard-Jones'
-ticks         = [0, 0.667, knorm[10], knorm[20]]
+ticks         = [0, 0.667, knorm[10-1], knorm[21-1]]
 tick_labels   = [r"$ \Gamma $", r"$K$", r"$M$", r"$ \Gamma $"]
 filename      = "KC_Dispersion_Curves.svg"
 #############################################
 
 y=Disp_Curves[:no_branches, :]
-fig, ax= plt.subplots(figsize=(6,3))
+fig, ax= plt.subplots(figsize=(8,4.5))
 for branch in range(no_branches):
     ax.scatter(knorm,y[branch,:], s=10)
-del(k_points)
-
-# Gamma Point(s) especially
-y=Disp_Curves[:6, 0]
-k_= 0*np.ones(len(y))
-ax.scatter(k_,y, s=10, color='blue')
-k_= (len(k_vec_list)-1)*np.ones(len(y))
-ax.scatter(k_,y, s=10, color='red')
-del(k_)
 
 fig.suptitle(suptitle, fontweight ="bold", fontsize = 15,
                      transform=ax.transAxes, y=1.15)
